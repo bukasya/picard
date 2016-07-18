@@ -42,6 +42,7 @@ import picard.cmdline.Option;
 import picard.cmdline.StandardOptionDefinitions;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.ExecutorService;
@@ -68,6 +69,8 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
 
     @Option(doc = "Stop after processing N reads, mainly for debugging.")
     public long STOP_AFTER = 0;
+
+    public static final int MAX_PAIRS = 10;
 
     private static final Log log = Log.getInstance(SinglePassSamProgram.class);
 
@@ -129,7 +132,8 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
 
         final ProgressLogger progress = new ProgressLogger(log);
 
-        ExecutorService service = Executors.newFixedThreadPool(1);
+        ExecutorService service = Executors.newCachedThreadPool();
+        ArrayList<Object[]> pairs = new ArrayList<>(MAX_PAIRS);
 
         for (final SAMRecord rec : in) {
             final ReferenceSequence ref;
@@ -139,10 +143,27 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
                 ref = walker.get(rec.getReferenceIndex());
             }
 
+            pairs.add(new Object[]{rec,ref});
+
+            //progress.record(rec);
+
+            if(pairs.size() < MAX_PAIRS){
+                continue;
+            }
+
+            //copying list for processing
+            final ArrayList<Object[]> tmpPairs = pairs;
+            pairs = new ArrayList<>(MAX_PAIRS);
+
             service.submit(new Runnable() {
                 public void run(){
-                    for(final SinglePassSamProgram program :programs){
-                        program.acceptRead(rec, ref);
+                    for(Object[] obj : tmpPairs){
+                        for(final SinglePassSamProgram program :programs){
+                            SAMRecord rec = (SAMRecord) obj[0];
+                            ReferenceSequence ref = (ReferenceSequence) obj[1];
+
+                            program.acceptRead(rec, ref);
+                        }
                     }
 
                 }
@@ -161,12 +182,6 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
             }
         }
 
-        CloserUtil.close(in);
-
-        for (final SinglePassSamProgram program : programs) {
-            program.finish();
-        }
-
         service.shutdown();
 
         try{
@@ -174,6 +189,13 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
         } catch(InterruptedException e){
             e.printStackTrace();
         }
+
+        CloserUtil.close(in);
+
+        for (final SinglePassSamProgram program : programs) {
+            program.finish();
+        }
+
     }
 
     /** Can be overriden and set to false if the section of unmapped reads at the end of the file isn't needed. */
