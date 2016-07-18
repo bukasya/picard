@@ -46,6 +46,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Super class that is designed to provide some consistent structure between subclasses that
@@ -164,6 +165,14 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
 
         for (final SinglePassSamProgram program : programs) {
             program.finish();
+        }
+
+        service.shutdown();
+
+        try{
+            service.awaitTermination(1, TimeUnit.DAYS);
+        } catch(InterruptedException e){
+            e.printStackTrace();
         }
     }
 
