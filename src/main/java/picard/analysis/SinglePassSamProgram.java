@@ -44,6 +44,8 @@ import picard.cmdline.StandardOptionDefinitions;
 import java.io.File;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Super class that is designed to provide some consistent structure between subclasses that
@@ -126,6 +128,8 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
 
         final ProgressLogger progress = new ProgressLogger(log);
 
+        ExecutorService service = Executors.newFixedThreadPool(1);
+
         for (final SAMRecord rec : in) {
             final ReferenceSequence ref;
             if (walker == null || rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
@@ -134,9 +138,14 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
                 ref = walker.get(rec.getReferenceIndex());
             }
 
-            for (final SinglePassSamProgram program : programs) {
-                program.acceptRead(rec, ref);
-            }
+            service.submit(new Runnable() {
+                public void run(){
+                    for(final SinglePassSamProgram program :programs){
+                        program.acceptRead(rec, ref);
+                    }
+
+                }
+            });
 
             progress.record(rec);
 
