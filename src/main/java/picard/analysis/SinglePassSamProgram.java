@@ -85,6 +85,32 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
         return 0;
     }
 
+    static class Task implements Runnable{
+
+        ArrayList<Object[]> pairsList;
+        Collection<SinglePassSamProgram> programs;
+        Semaphore sem;
+
+        public Task(ArrayList<Object[]> pairsList, Collection<SinglePassSamProgram> programs, Semaphore sem){
+            this.pairsList = pairsList;
+            this.programs = programs;
+            this.sem = sem;
+        }
+
+        @Override
+        public void run(){
+            for(Object[] obj : pairsList){
+                for(final SinglePassSamProgram program :programs){
+                    SAMRecord rec = (SAMRecord) obj[0];
+                    ReferenceSequence ref = (ReferenceSequence) obj[1];
+
+                    program.acceptRead(rec, ref);
+                }
+            }
+            sem.release();
+        }
+    }
+
     public static void makeItSo(final File input,
                                 final File referenceSequence,
                                 final boolean assumeSorted,
@@ -130,7 +156,6 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
             anyUseNoRefReads = anyUseNoRefReads || program.usesNoRefReads();
         }
 
-
         final ProgressLogger progress = new ProgressLogger(log);
 
         ExecutorService service = Executors.newFixedThreadPool(2);
@@ -163,19 +188,7 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
                 e.printStackTrace();
             }
 
-            service.submit(new Runnable() {
-                public void run(){
-                    for(Object[] obj : tmpPairsList){
-                        for(final SinglePassSamProgram program :programs){
-                            SAMRecord rec = (SAMRecord) obj[0];
-                            ReferenceSequence ref = (ReferenceSequence) obj[1];
-
-                            program.acceptRead(rec, ref);
-                        }
-                    }
-                    sem.release();
-                }
-            });
+            service.submit(new Task(tmpPairsList, programs, sem));
 
             // See if we need to terminate early?
             if (stopAfter > 0 && progress.getCount() >= stopAfter) {
@@ -186,6 +199,18 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
             if (!anyUseNoRefReads && rec.getReferenceIndex() == SAMRecord.NO_ALIGNMENT_REFERENCE_INDEX) {
                 break;
             }
+        }
+
+        // See if there is a tail and process it
+        if(pairsList.size() > 0){
+            final ArrayList<Object[]> tmpPairsList = pairsList;
+            try{
+                sem.acquire();
+            } catch (InterruptedException e){
+                e.printStackTrace();
+            }
+
+            service.submit(new Task(tmpPairsList, programs, sem));
         }
 
         service.shutdown();
