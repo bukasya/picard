@@ -47,6 +47,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -132,8 +133,9 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
 
         final ProgressLogger progress = new ProgressLogger(log);
 
-        ExecutorService service = Executors.newCachedThreadPool();
-        ArrayList<Object[]> pairs = new ArrayList<>(MAX_PAIRS);
+        ExecutorService service = Executors.newFixedThreadPool(2);
+        Semaphore sem = new Semaphore(5);
+        ArrayList<Object[]> pairsList = new ArrayList<>(MAX_PAIRS);
 
         for (final SAMRecord rec : in) {
             final ReferenceSequence ref;
@@ -143,21 +145,27 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
                 ref = walker.get(rec.getReferenceIndex());
             }
 
-            pairs.add(new Object[]{rec,ref});
+            pairsList.add(new Object[]{rec,ref});
 
-            //progress.record(rec);
+            progress.record(rec);
 
-            if(pairs.size() < MAX_PAIRS){
+            if(pairsList.size() < MAX_PAIRS){
                 continue;
             }
 
             //copying list for processing
-            final ArrayList<Object[]> tmpPairs = pairs;
-            pairs = new ArrayList<>(MAX_PAIRS);
+            final ArrayList<Object[]> tmpPairsList = pairsList;
+            pairsList = new ArrayList<>(MAX_PAIRS);
+
+            try {
+                sem.acquire();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
 
             service.submit(new Runnable() {
                 public void run(){
-                    for(Object[] obj : tmpPairs){
+                    for(Object[] obj : tmpPairsList){
                         for(final SinglePassSamProgram program :programs){
                             SAMRecord rec = (SAMRecord) obj[0];
                             ReferenceSequence ref = (ReferenceSequence) obj[1];
@@ -165,11 +173,9 @@ public abstract class SinglePassSamProgram extends CommandLineProgram {
                             program.acceptRead(rec, ref);
                         }
                     }
-
+                    sem.release();
                 }
             });
-
-            progress.record(rec);
 
             // See if we need to terminate early?
             if (stopAfter > 0 && progress.getCount() >= stopAfter) {
